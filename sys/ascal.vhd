@@ -129,7 +129,9 @@ ENTITY ascal IS
 		IHRES        : natural RANGE 1 TO 2048 :=2048;
 		N_DW         : natural RANGE 64 TO 128 := 128;
 		N_AW         : natural RANGE 8 TO 32 := 32;
-		N_BURST      : natural := 256 -- 256 bytes per burst
+		N_BURST      : natural := 256; -- 256 bytes per burst
+		ACK_CNT      : boolean := false; -- data acks cross to o_clk as a 2-bit Gray count (none lost to an o_clk gap)
+		READ_HEAL    : boolean := false  -- re-zero a stuck read bookkeeping at the idle point when both sides are quiet
 		);
 	PORT (
 		------------------------------------
@@ -1107,6 +1109,64 @@ ARCHITECTURE rtl OF ascal IS
 		RETURN p;
 	END FUNCTION;
 
+	-- poly_final in two clocks: poly_bound(poly_sum(t)) = poly_final(t). The sum is registered
+	-- so the DSP output reaches a register through the adder only (HDMI clock timing).
+	TYPE type_poly_s IS RECORD
+		r,g,b : unsigned(18 DOWNTO 0);
+	END RECORD;
+
+	FUNCTION poly_sum(t : type_poly_t) RETURN type_poly_s IS
+		VARIABLE s : type_poly_s;
+	BEGIN
+		s.r:=unsigned(t.r0(26 DOWNTO 8)+t.r1(26 DOWNTO 8));
+		s.g:=unsigned(t.g0(26 DOWNTO 8)+t.g1(26 DOWNTO 8));
+		s.b:=unsigned(t.b0(26 DOWNTO 8)+t.b1(26 DOWNTO 8));
+		RETURN s;
+	END FUNCTION;
+
+	FUNCTION poly_bound(s : type_poly_s) RETURN type_pix IS
+		VARIABLE p : type_pix;
+	BEGIN
+		p.r:=bound(s.r,15);
+		p.g:=bound(s.g,15);
+		p.b:=bound(s.b,15);
+		RETURN p;
+	END FUNCTION;
+
+	SIGNAL o_h_poly_s,o_v_poly_s : type_poly_s;
+	SIGNAL o_h_bil_pix_d,o_h_bic_pix_d,o_v_bil_pix_d,o_v_bic_pix_d : type_pix;
+	SIGNAL o_hsel_mode,o_vsel_mode : unsigned(2 DOWNTO 0);
+	SIGNAL o_wadl_d : natural RANGE 0 TO OHRESH-1;
+	SIGNAL o_wr_d : unsigned(3 DOWNTO 0);
+	SIGNAL o_vsel_hs,o_vsel_vs,o_vsel_de,o_vsel_vbl,o_vsel_pev : std_logic;
+
+	-- ACK_CNT: each burst's data ack normally crosses to o_clk as one toggle, and up to two
+	-- bursts can be owed. If o_clk has no edge while both acks toggle (an o_clk dropout, e.g.
+	-- the HDMI PLL reconfiguring), the toggles cancel: o_readlev stays 2, the read FSM waits in
+	-- sREAD for ever and DDR reads stop. A 2-bit Gray count is always sampled as a valid count;
+	-- the output side adds the difference (0..2 acks per o_clk). With a running o_clk it is the
+	-- old pulse, clock for clock.
+	SIGNAL avl_rdack_g : unsigned(1 DOWNTO 0);
+	SIGNAL o_rdack_g1,o_rdack_g2 : unsigned(1 DOWNTO 0);
+	SIGNAL o_rdack_n : natural RANGE 0 TO 3;
+	-- READ_HEAL: at the idle point (the line start that triggers a frame's first read,
+	-- o_vcpt_pre3 = o_vmin) the read bookkeeping is idle in a healthy frame. If it is not, and
+	-- nothing moved for a whole line on either side (no request, address ack, data ack or end of
+	-- copy; no beat owed or read held on the Avalon side), nothing is in flight: readlev,
+	-- copylev and the read and copy FSMs are re-zeroed. It never fires in a healthy frame.
+	SIGNAL avl_rpend : natural RANGE 0 TO 4*BLEN;
+	SIGNAL avl_quiet : std_logic;
+	SIGNAL o_avq1,o_avq2,o_hl_hsr,o_hl_evt,o_hl_aq : std_logic;
+
+	FUNCTION gray2_inc(g : unsigned(1 DOWNTO 0)) RETURN unsigned IS   -- 00 01 11 10
+	BEGIN
+		RETURN g(0) & NOT g(1);
+	END FUNCTION;
+	FUNCTION gray2_bin(g : unsigned(1 DOWNTO 0)) RETURN natural IS
+	BEGIN
+		RETURN to_integer(unsigned'(g(1) & (g(1) XOR g(0))));
+	END FUNCTION;
+
 	-- 4 DSP 18*18 + 18*18
 	FUNCTION poly_lerp(a  : poly_phase_t;
 							 b  : poly_phase_t;
@@ -1838,6 +1898,36 @@ BEGIN
 	avl_rad_c<=(avl_rad+1) MOD (2*BLEN)
 					WHEN avl_write_i='1' AND avl_waitrequest='0' ELSE avl_rad;
 
+	-- ACK_CNT and READ_HEAL, Avalon side
+	BmHealA:PROCESS(avl_clk,avl_reset_na) IS
+		VARIABLE p_v : natural RANGE 0 TO 5*BLEN;
+	BEGIN
+		IF avl_reset_na='0' THEN
+			avl_rdack_g<="00";
+			avl_rpend<=0;
+			avl_quiet<='0';
+		ELSIF rising_edge(avl_clk) THEN
+			-- one Gray step per data ack, at the beat that toggles avl_readdataack
+			IF ACK_CNT AND avl_readdatavalid='1' AND (avl_wad MOD BLEN)=BLEN-2 THEN
+				avl_rdack_g<=gray2_inc(avl_rdack_g);
+			END IF;
+			-- beats owed, and no read anywhere on this side
+			IF READ_HEAL THEN
+				p_v:=avl_rpend;
+				IF avl_read_i='1' AND avl_waitrequest='0' THEN
+					p_v:=p_v+BLEN;
+				END IF;
+				IF avl_readdatavalid='1' AND p_v>0 THEN
+					p_v:=p_v-1;
+				END IF;
+				IF p_v>4*BLEN THEN p_v:=4*BLEN; END IF;
+				avl_rpend<=p_v;
+				avl_quiet<=to_std_logic(p_v=0 AND avl_rpend=0 AND avl_state/=sREAD AND avl_read_sr='0' AND
+							avl_read_pulse='0' AND avl_read_sync=avl_read_sync2);
+			END IF;
+		END IF;
+	END PROCESS BmHealA;
+
 	-----------------------------------------------------------------------------
 	-- DPRAM Output. Double buffer for RAM bursts.
 	PROCESS (avl_clk) IS
@@ -1891,6 +1981,8 @@ BEGIN
 	-----------------------------------------------------------------------------
 	Scalaire:PROCESS (o_clk,o_reset_na) IS
 		VARIABLE lev_inc_v,lev_dec_v : std_logic;
+		VARIABLE cl_v : integer RANGE -1 TO 5;              -- ACK_CNT copylev
+		VARIABLE hl_evt_v,hl_hsr_v : std_logic;              -- READ_HEAL
 		VARIABLE prim_v,last_v,bib_v : std_logic;
 		VARIABLE shift_v : unsigned(0 TO N_DW+15);
 		VARIABLE hpix_v : type_pix;
@@ -1905,6 +1997,9 @@ BEGIN
 			o_readlev<=0;
 			o_copylev<=0;
 			o_hsp<='0';
+			-- both Gray counts are "00" after a reset
+			o_rdack_g1<="00"; o_rdack_g2<="00"; o_rdack_n<=0;
+			o_avq1<='0'; o_avq2<='0'; o_hl_hsr<='0'; o_hl_evt<='1'; o_hl_aq<='0';
 
 		ELSIF rising_edge(o_clk) THEN
 			------------------------------------------------------
@@ -2054,6 +2149,17 @@ BEGIN
 			o_readdataack_sync<=avl_readdataack; -- <ASYNC>
 			o_readdataack_sync2<=o_readdataack_sync;
 			o_readdataack<=o_readdataack_sync XOR o_readdataack_sync2;
+
+			-- ACK_CNT: the data acks as a Gray count, same 2-FF + 1 timing
+			IF ACK_CNT THEN
+				o_rdack_g1<=avl_rdack_g; -- <ASYNC>
+				o_rdack_g2<=o_rdack_g1;
+				o_rdack_n<=(gray2_bin(o_rdack_g1) - gray2_bin(o_rdack_g2) + 4) MOD 4;
+			END IF;
+			IF READ_HEAL THEN
+				o_avq1<=avl_quiet; -- <ASYNC>
+				o_avq2<=o_avq1;
+			END IF;
 
 			------------------------------------------------------
 			lev_inc_v:='0';
@@ -2360,10 +2466,39 @@ BEGIN
 			END IF;
 
 			-- COPYLEV : Number of ongoing copies to line buffers
+			IF NOT ACK_CNT THEN
 			IF lev_dec_v='1' AND o_readdataack='0' THEN
 				o_copylev<=o_copylev-1;
 			ELSIF lev_dec_v='0' AND o_readdataack='1' THEN
 				o_copylev<=o_copylev+1;
+			END IF;
+			-- ACK_CNT: + the acks of this clock (0..2), - the end of copy, bounded to 0..2
+			ELSE
+				cl_v:=o_copylev + o_rdack_n;
+				IF lev_dec_v='1' THEN cl_v:=cl_v-1; END IF;
+				IF cl_v<0 THEN cl_v:=0; ELSIF cl_v>2 THEN cl_v:=2; END IF;
+				o_copylev<=cl_v;
+			END IF;
+
+			-- READ_HEAL: hl_evt_v = anything moving this clock on the output side
+			IF READ_HEAL THEN
+				hl_evt_v:=lev_inc_v OR lev_dec_v OR o_readack OR o_readdataack OR to_std_logic(o_rdack_n/=0);
+				hl_hsr_v:=o_hsv(0) AND NOT o_hsv(1);
+				o_hl_hsr<=hl_hsr_v;
+				IF hl_hsr_v='1' AND o_hl_hsr='0' THEN   -- once per line start, whatever o_ce does
+					IF o_vcpt_pre3=o_vmin AND o_hl_evt='0' AND hl_evt_v='0' AND o_hl_aq='1' AND o_avq2='1' AND
+						NOT (o_readlev=0 AND o_copylev=0 AND o_state=sDISP AND o_copy=sWAIT) THEN
+						o_state<=sDISP;
+						o_copy<=sWAIT;
+						o_readlev<=0;
+						o_copylev<=0;
+					END IF;
+					o_hl_evt<=hl_evt_v;
+					o_hl_aq<=o_avq2;
+				ELSE
+					o_hl_evt<=o_hl_evt OR hl_evt_v;
+					o_hl_aq<=o_hl_aq AND o_avq2;
+				END IF;
 			END IF;
 
 			-- FIFOs
@@ -2708,15 +2843,23 @@ BEGIN
 			-- C9 : Apply Polyphase
 			o_h_poly_t<=poly_calc(o_h_poly_phase,o_hpixq(8));
 
-			-- C10 : Sum and bound
-			o_h_poly_pix<=poly_final(o_h_poly_t);
+			-- C10 : Sum
+			o_h_poly_s<=poly_sum(o_h_poly_t);
 
-			-- C11 : Select interpoler ----------------------------
-			o_wadl<=o_dcptv(14);
-			o_wr<=o_altx AND (o_copyv(14) & o_copyv(14) & o_copyv(14) & o_copyv(14));
+			-- C11 : Bound. The other interpolators and the line write wait one clock
+			o_h_poly_pix<=poly_bound(o_h_poly_s);
+			o_h_bil_pix_d<=o_h_bil_pix;
+			o_h_bic_pix_d<=o_h_bic_pix;
+			o_hsel_mode<=o_hmode(2 DOWNTO 0);
+			o_wadl_d<=o_dcptv(14);
+			o_wr_d<=o_altx AND (o_copyv(14) & o_copyv(14) & o_copyv(14) & o_copyv(14));
+
+			-- C12 : Select interpoler ----------------------------
+			o_wadl<=o_wadl_d;
+			o_wr<=o_wr_d;
 			o_ldw<=(x"00",x"00",x"00");
 
-			CASE o_hmode(2 DOWNTO 0) IS
+			CASE o_hsel_mode IS
 				WHEN "000"  => -- Nearest
 					IF MASK(MASK_NEAREST)='1' THEN
 						o_ldw<=o_h_poly_pix;
@@ -2724,11 +2867,11 @@ BEGIN
 				WHEN "001" | "010" => -- Bilinear | Sharp Bilinear
 					IF MASK(MASK_BILINEAR)='1' OR
 						 MASK(MASK_SHARP_BILINEAR)='1' THEN
-						o_ldw<=o_h_bil_pix;
+						o_ldw<=o_h_bil_pix_d;
 				 END IF;
 				WHEN "011" => -- BiCubic
 					IF MASK(MASK_BICUBIC)='1' THEN
-						o_ldw<=o_h_bic_pix;
+						o_ldw<=o_h_bic_pix_d;
 					END IF;
 				WHEN OTHERS => -- PolyPhase
 					IF MASK(MASK_POLY)='1' THEN
@@ -2992,20 +3135,31 @@ BEGIN
 				-- C10 : Apply polyphase
 				o_v_poly_t<=poly_calc(o_v_poly_phase,o_vpixq);
 
-				-- C11 : Bound
-				o_v_poly_pix<=poly_final(o_v_poly_t);
+				-- C11 : Sum
+				o_v_poly_s<=poly_sum(o_v_poly_t);
 
-				-- CYCLE 12 -----------------------------------------
-				o_hs<=o_hsv(11);
-				o_vs<=o_vsv(11);
-				o_de<=o_dev(11);
-				o_vbl<=o_end(11);
+				-- C12 : Bound. The other interpolators and the syncs wait one clock
+				o_v_poly_pix<=poly_bound(o_v_poly_s);
+				o_v_bil_pix_d<=o_v_bil_pix;
+				o_v_bic_pix_d<=o_v_bic_pix;
+				o_vsel_mode<=o_vmode(2 DOWNTO 0);
+				o_vsel_hs<=o_hsv(11);
+				o_vsel_vs<=o_vsv(11);
+				o_vsel_de<=o_dev(11);
+				o_vsel_vbl<=o_end(11);
+				o_vsel_pev<=o_pev(11);
+
+				-- CYCLE 13 -----------------------------------------
+				o_hs<=o_vsel_hs;
+				o_vs<=o_vsel_vs;
+				o_de<=o_vsel_de;
+				o_vbl<=o_vsel_vbl;
 				o_r<=x"00";
 				o_g<=x"00";
 				o_b<=x"00";
-				o_brd<= not o_pev(11);
+				o_brd<= not o_vsel_pev;
 
-				CASE o_vmode(2 DOWNTO 0) IS
+				CASE o_vsel_mode IS
 					WHEN "000" => -- Nearest
 						IF MASK(MASK_NEAREST)='1' THEN
 							o_r<=o_v_poly_pix.r;
@@ -3015,15 +3169,15 @@ BEGIN
 					WHEN "001" | "010" => -- Bilinear | Sharp Bilinear
 						IF MASK(MASK_BILINEAR)='1' OR
 							 MASK(MASK_SHARP_BILINEAR)='1' THEN
-							o_r<=o_v_bil_pix.r;
-							o_g<=o_v_bil_pix.g;
-							o_b<=o_v_bil_pix.b;
+							o_r<=o_v_bil_pix_d.r;
+							o_g<=o_v_bil_pix_d.g;
+							o_b<=o_v_bil_pix_d.b;
 						END IF;
 					WHEN "011" => -- BiCubic
 						IF MASK(MASK_BICUBIC)='1' THEN
-							o_r<=o_v_bic_pix.r;
-							o_g<=o_v_bic_pix.g;
-							o_b<=o_v_bic_pix.b;
+							o_r<=o_v_bic_pix_d.r;
+							o_g<=o_v_bic_pix_d.g;
+							o_b<=o_v_bic_pix_d.b;
 						END IF;
 
 					WHEN OTHERS => -- Polyphase
@@ -3034,7 +3188,7 @@ BEGIN
 						END IF;
 				END CASE;
 
-				IF o_pev(11)='0' THEN
+				IF o_vsel_pev='0' THEN
 					o_r<=o_border(23 DOWNTO 16); -- Copy border colour
 					o_g<=o_border(15 DOWNTO 8);
 					o_b<=o_border(7  DOWNTO 0);

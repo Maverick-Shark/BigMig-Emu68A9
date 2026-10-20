@@ -8,7 +8,7 @@ running bare-metal on the second ARM core of the DE10-Nano's HPS. The Amiga cust
 Agnus, Denise, Paula, Gary, the CIAs — are the same cycle-accurate Minimig logic they have
 always been. Only the processor moved.
 
-The result is an Amiga that is **520 to 770 MIPS**, from 800 MHz to 1.2 GHz of Host Speed, where
+The result is an Amiga that is **about 840 MIPS** at 1.2 GHz of Host Speed, where
 Minimig's TG68K is about 12 — selectable as
 a **68EC020, a 68040 or a 68060+**, with a **68882-class FPU** and an open SIMD extension — and
 whose chip RAM is nonetheless **faster than a real A1200's**.
@@ -45,12 +45,14 @@ that is where responsiveness is won or lost.
 * **Core #1 runs bare metal, and only the firmware.** No Linux scheduler on it, no other
   process, no sharing — the JIT owns the core outright. Linux is booted with `maxcpus=1` so it
   never has a claim on it in the first place (that is what the sidecar file below is for).
+  What the two cores do share is the ARM's L2 cache: Linux keeps all eight of its ways, and the
+  JIT's translated code uses two of them as well — BlitzQuake 1.50 runs about 18 % faster for it.
 * **Core #0 runs MiSTer's Main with an explicit priority order**: **USB polling and the OSD
   first**, at the same **1 ms** rate as official Main, then **audio** and the MP3 decoder, then
   the **hard-drive device**, then the file share, with the network bridge last. Input is never
   queued behind anything, and music keeps playing while the disk works: disk work — the part
-  that can afford to wait — waits. When the Amiga sits idle the disk and share services back
-  off.
+  that can afford to wait — waits. When the Amiga is not using them, the disk and share
+  services sleep until the main loop has work for them.
 * **Emu68 was ported to the Cortex-A9.** Michal Schulz's Emu68 targets AArch64; the A9 on the
   DE10-Nano is 32-bit ARMv7. The JIT's code generator, its cache maintenance and its exception
   paths were rebuilt for that target, which is what makes a bare-metal 68k possible on this
@@ -65,7 +67,7 @@ very fast" would only be half a claim; the other half is that it feels like an F
 
 | | |
 |---|---|
-| **CPU** | **68EC020, 68040 or 68060+**, per config from the OSD, via the Emu68-A9 JIT — **520–770 MIPS** (800 MHz–1.2 GHz), on a dedicated ARM core |
+| **CPU** | **68EC020, 68040 or 68060+**, per config from the OSD, via the Emu68-A9 JIT — **about 840 MIPS** at 1.2 GHz, on a dedicated ARM core |
 | **FPU** | 68882-class, **double precision** — switchable on the 020, always there on the 040 and 060+ — plus a ROM that puts AmigaOS's maths libraries on it |
 | **SIMD** | **OMMX** — an open vector extension; the AMMX instruction set is a subset, so AMMX software runs |
 | **Chipset** | OCS / ECS / AGA — unmodified Minimig logic, in the fabric |
@@ -105,26 +107,21 @@ very fast" would only be half a claim; the other half is that it feels like an F
 
 ## Measured
 
-SysInfo 4.4, same install, from 800 MHz to 1.2 GHz of Host Speed:
+SysInfo 4.4 at 1.2 GHz of Host Speed reads **837–842 MIPS**.
 
-| presented CPU | MIPS | MFlops | vs A600 |
-|---|---|---|---|
-| 68EC020 + 68882 | **520 – 770** | ~47 – **70** | ~940 – 1400× |
-| 68040 | 518 – ~770 | ~44 – ~66 | ~930 – 1400× |
-
-The MIPS at 800 MHz are SysInfo's own readings; at 1.2 GHz SysInfo reads 760–770 MIPS. The MFlops
-are SysInfo's reading at 1.2 GHz on the 68EC020 + 68882 — **70**, up from 27 before this release; the
-rest follows the clock, and the 68040 the 68EC020's ratio.
-
-* **43× to 64×** Minimig's TG68K with Data Cache.
+* **About 70×** Minimig's TG68K with Data Cache.
 * As a 68040 the OS confirms it end to end: SysInfo reads *68040 / 68040+68882 / MMU 68040
   (not in use)*, and WhichAmiga reads *MC68040, 68040fpu*.
 * **Chip RAM**, TestROM2 with Chip Speed at Fast: **7.6 MB/s at 607 ns** an access — above
   Minimig's TG68K with its data cache on (5.9 MB/s, 899 ns) on both counts.
 * **3D**, BigMig 3Dx2 (68060+, 3D GPU Wait on Auto, Host Speed 1.2 GHz): Alain Thellier's **CoW3D 6**
   in its 640×480 window, **87 fps**; **BlitzQuake-3Dx2** (BlitzQuake 1.50 drawing through our
-  `minigl.library`), `timedemo demo1` at 640×480, **45 fps**; **BlitzQuake 1.50** itself (its own MiniGL
-  inside, our Warp3D underneath), the same timedemo at 640×480, **34 fps**.
+  `minigl.library`), `timedemo demo1` at 640×480, **46 fps**; **BlitzQuake 1.50** itself (its own MiniGL
+  inside, our Warp3D underneath), the same timedemo at 640×480, **42 fps**; PiStorm3D's
+  **GLQuake** port, the same timedemo at 640×480, **43 fps**.
+* **Disk and share**, while the Amiga is idle, now cost the Linux core almost nothing: the disk
+  service wakes about 50 times a second instead of 4,400, the share about 100 times instead of
+  1,150, and the Linux core is idle 5–7 points more of the time — with the same transfer speeds.
 
 Chip-RAM accesses do not go over the Amiga chip bus. They go down the memory controller's own CPU port, where a cycle completes when SDRAM actually commits it rather than when arbitration says so. Agnus keeps absolute priority for DMA.
 
@@ -489,7 +486,10 @@ pass back to the dispatcher, as older firmware did. It is there for testing.
 translated unit holds, so each pass runs that many iterations. **8 (Default)** is upstream's
 value and the most copies; 4 and 2 hold fewer; 1 runs one iteration per pass. Under ECS LEGACY
 COMPAT the row offers only 2, that preset's value, and 1, and both keep the preset: under its
-Verify no loop runs inside a unit, and larger values measured slower there.
+Verify no loop runs inside a unit, and larger values measured slower there. Whatever the row says,
+the copies of one loop stop at about 512 bytes of ARM code, so a long loop body gets fewer of them:
+on this ARM core a hot loop that fits its instruction cache runs faster than a longer one
+(BlitzQuake 1.50 gains 7 % from that limit alone).
 
 If something behaves oddly, **try the default again before reporting it**, and tell us which
 settings you used.
@@ -512,10 +512,9 @@ is the same as setting it up for Minimig's own MiSTer RTG card.
   the Amiga's own sprites draw it, as always.
 * **Which picture is on screen** is in the OSD's title — **BigMig (RTG)**, **(AGA)**, **(ECS)**
   or **(OCS)** — and in a short tag whenever it changes.
-
-**Known issue.** Now and then the RTG picture comes up garbled after a screen-mode switch. A Reset
-does not clear it; loading the core again from the OSD (**Load core**) does, with no need to power
-off.
+* **A screen-mode switch** reaches an HDMI monitor as one mode change. BigMig's Main programs only
+  the mode a switch ends in — never a passing one, never the same mode twice — and writes the new
+  timing during the vertical blank, so a monitor or a KVM switch resyncs once per switch.
 
 ### Ethernet
 
@@ -661,9 +660,9 @@ GPU), `ENGINE-SOFT` (the engine without a GPU core), `ORIG-PROXY` or `68K-FALLBA
 
 **PiStorm3D's ports run too.** Programs built for PiStorm3D's MiniGL — the final 29 or the earlier
 Classic 27 — open ours and get the function table they were built for, with OpenGL's own token values.
-Tested on BigMig: the Quake 1 port (GLQuake) with Quake's shareware data, and Hurrican. Others, such as
-Jedi Outcast, Return to Castle Wolfenstein, Quake 3 and OpenLara, need the original game's data, which you
-must own.
+Tested on BigMig: the Quake 1 port (GLQuake) with Quake's shareware data, Hurrican, and the Matrix Storm 3D
+screen blanker from Aminet. Others, such as Jedi Outcast, Return to Castle Wolfenstein, Quake 3 and OpenLara,
+need the original game's data, which you must own.
 
 **BlitzQuake-3Dx2** — Christian Michael's BlitzQuake 1.50, rebuilt so that its OpenGL goes through
 `minigl.library`, whose work then runs on the ARM — is in the disk's `3Dx2/BlitzQuake-3Dx2/` drawer,
@@ -997,7 +996,7 @@ BigMig stands on other people's work, and most of the Amiga in it is theirs.
 | **BlitzQuake-3Dx2** on the guest disk | Christian Michael's BlitzQuake 1.50, after the Quake / QuakeWorld ports by Frank Wille and Steffen Haeuser, from id Software's Quake; BigMig's rebuild and its import glue by Ruben Aparicio (@raparici) | GPL v2 (the glue: MIT) — complete source in `3Dx2/BlitzQuake-3Dx2/src/` |
 
 ⚠ **The firmware in this repository is a compiled binary.** Its source lives in its own
-repository and is published separately, under its own licence.
+repository, [Emu68-A964](https://github.com/raparici/Emu68-A964), under its own licence.
 
 If we have got an attribution wrong or left one out, please tell us — that is a bug like any
 other.

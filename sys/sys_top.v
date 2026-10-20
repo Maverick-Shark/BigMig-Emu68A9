@@ -1030,6 +1030,12 @@ wire         bob_deint;
 `ifdef MENU_CORE
 		.N_BURST(2048),
 `endif
+`ifdef HYBRID_EMU
+		// ascal's read engine: data acks as a Gray count (none lost while the HDMI PLL
+		// reconfigures) and the idle-point re-zero of a stuck read bookkeeping
+		.ACK_CNT("true"),
+		.READ_HEAL("true"),
+`endif
 		.N_DW(128),
 		.N_AW(28)
 	)
