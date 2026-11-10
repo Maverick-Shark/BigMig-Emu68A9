@@ -1,0 +1,154 @@
+# -------------------------------------------------------------------------- #
+#
+# BigMig-Emu68A9 for the Chameleon96 (Cyclone V SE 5CSEBA6U19I7)
+# Quartus Prime Lite 17.1
+#
+# Top level: ch96_top (board wrapper) -> sys_top (MiSTer framework, Chameleon96
+# variant) -> emu (BigMig.sv). Chip RAM on the dual APS6404L PSRAM module.
+#
+# -------------------------------------------------------------------------- #
+
+set_global_assignment -name TOP_LEVEL_ENTITY ch96_top
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CSEBA6U19I7
+set_global_assignment -name DEVICE_FILTER_PACKAGE UFBGA
+set_global_assignment -name DEVICE_FILTER_PIN_COUNT 484
+set_global_assignment -name DEVICE_FILTER_SPEED_GRADE 7
+set_global_assignment -name ORIGINAL_QUARTUS_VERSION 17.1.0
+set_global_assignment -name LAST_QUARTUS_VERSION "17.1.0 Lite Edition"
+
+set_global_assignment -name PARTITION_NETLIST_TYPE SOURCE -section_id Top
+set_global_assignment -name PARTITION_FITTER_PRESERVATION_LEVEL PLACEMENT_AND_ROUTING -section_id Top
+set_global_assignment -name PARTITION_COLOR 16764057 -section_id Top
+
+set_global_assignment -name GENERATE_RBF_FILE ON
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+set_global_assignment -name NUM_PARALLEL_PROCESSORS ALL
+set_global_assignment -name SAVE_DISK_SPACE OFF
+set_global_assignment -name SMART_RECOMPILE ON
+set_global_assignment -name MIN_CORE_JUNCTION_TEMP "-40"
+set_global_assignment -name MAX_CORE_JUNCTION_TEMP 100
+set_global_assignment -name POWER_PRESET_COOLING_SOLUTION "23 MM HEAT SINK WITH 200 LFPM AIRFLOW"
+set_global_assignment -name POWER_BOARD_THERMAL_MODEL "NONE (CONSERVATIVE)"
+set_global_assignment -name TIMEQUEST_MULTICORNER_ANALYSIS ON
+set_global_assignment -name OPTIMIZE_POWER_DURING_FITTING OFF
+set_global_assignment -name FINAL_PLACEMENT_OPTIMIZATION ALWAYS
+set_global_assignment -name FITTER_EFFORT "STANDARD FIT"
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
+set_global_assignment -name ALLOW_POWER_UP_DONT_CARE ON
+set_global_assignment -name QII_AUTO_PACKED_REGISTERS "SPARSE AUTO"
+set_global_assignment -name ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION ON
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC ON
+set_global_assignment -name PHYSICAL_SYNTHESIS_EFFORT EXTRA
+set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION ON
+set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING ON
+set_global_assignment -name OPTIMIZATION_TECHNIQUE SPEED
+set_global_assignment -name MUX_RESTRUCTURE ON
+set_global_assignment -name REMOVE_REDUNDANT_LOGIC_CELLS ON
+set_global_assignment -name AUTO_DELAY_CHAINS_FOR_HIGH_FANOUT_INPUT_PINS ON
+set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA ON
+set_global_assignment -name ADV_NETLIST_OPT_SYNTH_WYSIWYG_REMAP ON
+set_global_assignment -name SYNTH_GATED_CLOCK_CONVERSION ON
+set_global_assignment -name PRE_MAPPING_RESYNTHESIS ON
+set_global_assignment -name ROUTER_CLOCKING_TOPOLOGY_ANALYSIS ON
+set_global_assignment -name ECO_OPTIMIZE_TIMING ON
+set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION ON
+set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
+set_global_assignment -name ALM_REGISTER_PACKING_EFFORT LOW
+set_global_assignment -name OPTIMIZE_POWER_DURING_SYNTHESIS OFF
+set_global_assignment -name ROUTER_REGISTER_DUPLICATION ON
+set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION ALWAYS
+set_global_assignment -name SEED 9
+
+# ---- design options (as the DE10-Nano BigMig.qsf) ----------------------------
+set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
+set_global_assignment -name VERILOG_MACRO "MISTER_FB_PALETTE=1"
+set_global_assignment -name VERILOG_MACRO "HYBRID_EMU=1"
+set_global_assignment -name VERILOG_MACRO "BIGMIG_NO_CHIP_WRITE_RETRY=1"
+set_global_assignment -name VERILOG_MACRO "BIGMIG_GPU=1"
+set_global_assignment -name VERILOG_MACRO "BIGMIG_GPU_LEAN=1"
+set_global_assignment -name VERILOG_MACRO "G2_QUAD=1"
+set_global_assignment -name VERILOG_MACRO "G3_WALK_MERGE=1"
+set_global_assignment -name VERILOG_MACRO "G3_WALK_MERGE_INTERP=1"
+set_global_assignment -name VERILOG_MACRO "BIGMIG_GPU_SHARED_SETUP=1"
+set_global_assignment -name VERILOG_MACRO "BIGMIG_GPU_CSWAP=1"
+
+# ---- Chameleon96 ---------------------------------------------------------------
+# chip RAM on the dual PSRAM module, PSRAM PLL, LED status (BigMig.sv)
+set_global_assignment -name VERILOG_MACRO "MISTER_CHAMELEON96=1"
+# PSRAM pads: launch CE#/SIO on the falling SCLK edge instead of the rising one.
+# Try it if the calibration fails (D5 blinking slowly); see README_ch96.md.
+#set_global_assignment -name VERILOG_MACRO "PSRAM_SCLK_INV=1"
+# the board has no VGA/analog output: leave out the RTG native-rate analog scanout
+set_global_assignment -name VERILOG_MACRO "BIGMIG_NO_RTG_ANALOG=1"
+# uncomment if the preloader does not route the HPS SPI master to the FPGA
+#set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
+
+source sys/pins_ch96.tcl
+source sys/hps_ch96.tcl
+
+# ---- sources ---------------------------------------------------------------------
+set_global_assignment -name QIP_FILE sys/sys.qip
+set_global_assignment -name SYSTEMVERILOG_FILE ch96_top.sv
+
+set_global_assignment -name QIP_FILE rtl/ram.qip
+set_global_assignment -name QIP_FILE rtl/agnus.qip
+set_global_assignment -name QIP_FILE rtl/cia.qip
+set_global_assignment -name QIP_FILE rtl/gayle.qip
+set_global_assignment -name QIP_FILE rtl/paula.qip
+set_global_assignment -name QIP_FILE rtl/denise.qip
+set_global_assignment -name VERILOG_FILE rtl/gary.v
+set_global_assignment -name VERILOG_FILE rtl/chip_write_retry.v
+set_global_assignment -name VERILOG_FILE rtl/rtg.v
+set_global_assignment -name VERILOG_FILE rtl/akiko.v
+set_global_assignment -name VERILOG_FILE rtl/fastchip.v
+set_global_assignment -name VERILOG_FILE rtl/userio.v
+set_global_assignment -name VERILOG_FILE rtl/cart.v
+set_global_assignment -name VERILOG_FILE rtl/amiga_clk.v
+set_global_assignment -name VERILOG_FILE rtl/minimig_syscontrol.v
+set_global_assignment -name VERILOG_FILE rtl/minimig_sram_bridge.v
+set_global_assignment -name VERILOG_FILE rtl/minimig_m68k_bridge.v
+set_global_assignment -name VERILOG_FILE rtl/minimig_bankmapper.v
+set_global_assignment -name VERILOG_FILE rtl/minimig.v
+set_global_assignment -name VERILOG_FILE rtl/cpu_wrapper.v
+
+# Emu68-A9 hybrid chip seam
+set_global_assignment -name VERILOG_FILE rtl/minimig_m68k_hybrid_bridge.v
+set_global_assignment -name VERILOG_FILE sys/axi_seam_slave.v
+set_global_assignment -name VERILOG_FILE sys/seam_engine.v
+set_global_assignment -name VERILOG_FILE sys/seam_ipl.v
+set_global_assignment -name VERILOG_FILE sys/seam_cpuregs.v
+set_global_assignment -name VERILOG_FILE hps_ext.v
+set_global_assignment -name VERILOG_FILE sys/h2f_axi3_to_lite.v
+set_global_assignment -name VERILOG_FILE rtl/cdda.v
+
+# RTG: native-rate analog scanout (left out by BIGMIG_NO_RTG_ANALOG) and the HDMI pointer
+set_global_assignment -name VERILOG_FILE rtl/rtg_ddr_reader.v
+set_global_assignment -name VERILOG_FILE rtl/rtg_scanout.v
+set_global_assignment -name VERILOG_FILE rtl/rtg_sprite_overlay.v
+set_global_assignment -name VERILOG_FILE rtl/rtg_hdmi_osd_sprite.v
+
+# GPU
+set_global_assignment -name QIP_FILE rtl/gpu/bigmig/quartus/bm_gpu.qip
+set_global_assignment -name VERILOG_FILE sys/h2f_lite_gpu_demux.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/gpu_pll.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/avl_rd_arb2.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/bigmig_f2sdram_terminator.sv
+set_instance_assignment -name DSP_BLOCK_BALANCING "LOGIC ELEMENTS" -to "*TextureFilter:*"
+set_instance_assignment -name DSP_BLOCK_BALANCING "LOGIC ELEMENTS" -to "*ColorInterpolator:fogInterpolator"
+
+# chip RAM: dual APS6404L PSRAM (replaces rtl/sdram_ctrl.v on this board)
+set_global_assignment -name QIP_FILE rtl/pll_psram.qip
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/psram/psram_chip_ctrl.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/psram/psram_afifo.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/psram/psram_dual.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/psram/psram_n.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/psram/psram_cal3.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/psram/psram_dps.sv
+
+set_global_assignment -name SYSTEMVERILOG_FILE BigMig.sv
+
+set_global_assignment -name SDC_FILE BigMig_ch96.sdc
+set_global_assignment -name PRE_FLOW_SCRIPT_FILE "quartus_sh:sys/build_id.tcl"
+
+set_instance_assignment -name PARTITION_HIERARCHY root_partition -to | -section_id Top

@@ -1,0 +1,6 @@
+# PSRAM PLL for the Chameleon96 port (teiram's Amstrad_MiSTer_ch96 PSRAM PLL, renamed).
+# Plain files, no IP metadata, so any Quartus from 17.0 on compiles it as it is.
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) pll_psram.v ]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) pll_psram/pll_psram_0002.v ]
+set_instance_assignment -name PLL_COMPENSATION_MODE DIRECT -to "*pll_psram_0002*|altera_pll:altera_pll_i*|*"
+set_instance_assignment -name UNFORCE_MERGE_PLL_OUTPUT_COUNTER ON -to "*pll_psram_0002*|altera_pll:altera_pll_i*|*"

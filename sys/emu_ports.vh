@@ -127,6 +127,19 @@ output        SDRAM_nCAS,
 output        SDRAM_nRAS,
 output        SDRAM_nWE,
 
+input         CLK_100M,
+output        PSRAM_SCLK,
+output        PSRAM_CE_N,
+output  [3:0] PSRAM_SIO_OUT,
+output  [3:0] PSRAM_SIO_OE,
+input   [3:0] PSRAM_SIO_IN,
+
+output        PSRAM2_SCLK,
+output        PSRAM2_CE_N,
+output  [3:0] PSRAM2_SIO_OUT,
+output  [3:0] PSRAM2_SIO_OE,
+input   [3:0] PSRAM2_SIO_IN,
+
 `ifdef MISTER_DUAL_SDRAM
 //Secondary SDRAM
 //Set all output SDRAM_* signals to Z ASAP if SDRAM2_EN is 0

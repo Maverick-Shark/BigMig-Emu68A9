@@ -201,7 +201,8 @@ module screen_rotate
 	output        DDRAM_RD
 );
 
-parameter MEM_BASE    = 7'b0010010; // buffer at 0x24000000, 3x8MB
+parameter MEM_BASE = 7'b0001110; // ch96: 0x1C000000 (32MB grid). Buffer 2 (0x1D000000) shares the app LFB base, which is idle in MISTER_FB game mode. Avoids the scaler vbuf (0x1E800000-0x20000000, 3x8M). DE10 used 7'b0010010 -> 0x24000000
+
 
 reg  do_flip;
 

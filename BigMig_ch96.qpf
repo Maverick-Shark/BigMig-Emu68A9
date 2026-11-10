@@ -1,0 +1,3 @@
+# BigMig-Emu68A9 for the Chameleon96 -- Quartus Prime Lite 17.1
+QUARTUS_VERSION = "17.1"
+PROJECT_REVISION = "BigMig_ch96"

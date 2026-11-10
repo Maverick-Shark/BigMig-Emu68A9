@@ -26,6 +26,8 @@ module sys_top
 	input         FPGA_CLK2_50,
 	input         FPGA_CLK3_50,
 
+	output        clk_50m,
+
 	//////////// HDMI //////////
 	output        HDMI_I2C_SCL,
 	inout         HDMI_I2C_SDA,
@@ -55,6 +57,19 @@ module sys_top
 	output  [1:0] SDRAM_BA,
 	output        SDRAM_CLK,
 	output        SDRAM_CKE,
+
+	//////////// PSRAM ///////////
+	output        PSRAM_SCLK,
+	output        PSRAM_CE_N,
+	output  [3:0] PSRAM_SIO_OUT,
+	output  [3:0] PSRAM_SIO_OE,
+	input   [3:0] PSRAM_SIO_IN,
+
+	output        PSRAM2_SCLK,
+	output        PSRAM2_CE_N,
+	output  [3:0] PSRAM2_SIO_OUT,
+	output  [3:0] PSRAM2_SIO_OE,
+	input   [3:0] PSRAM2_SIO_IN,
 
 `ifdef MISTER_DUAL_SDRAM
 	////////// SDR #2 //////////
@@ -153,8 +168,9 @@ wire led_d =  led_disk[1]  ? ~led_disk[0]  : ~(led_disk[0] | gp_out[29]);
 wire led_u = ~led_user;
 wire led_locked;
 
-//LEDs on de10-nano board
-assign LED = (led_overtake & led_state) | (~led_overtake & {1'b0,led_locked,1'b0, ~led_p, 1'b0, ~led_d, 1'b0, ~led_u});
+// Chameleon96: bits 1/3 carry the two RF LEDs (yellow=video-active,
+// blue=always-on) as active-high "1=lit" like bits 5/6, so UIO_LEDS overrides them.
+assign LED = (led_overtake & led_state) | (~led_overtake & {1'b0, led_locked, 1'b0, ~led_p, 1'b1, ~led_d, HDMI_TX_DE, ~led_u});
 
 wire [2:0] mcp_btn;
 wire       mcp_sdcd;
@@ -713,6 +729,7 @@ sysmem_lite sysmem
 	.reset_core_req(reset_req),
 	.reset_out(reset),
 	.clock(clk_100m),
+	.clk_50m(clk_50m),
 
 	//DE10-nano has no reset signal on GPIO, so core has to emulate cold reset button.
 	.reset_hps_cold_req(btn_r),
@@ -1007,7 +1024,7 @@ wire         bob_deint;
 
 	ascal 
 	#(
-		.RAMBASE(32'h20000000),
+		.RAMBASE(32'h1E800000),
 	`ifdef MISTER_SMALL_VBUF
 		.RAMSIZE(32'h00200000),
 	`else
@@ -1510,7 +1527,7 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	wire [23:0] hdmi_data_osd;
 	wire        hdmi_de_osd, hdmi_vs_osd, hdmi_hs_osd;
 
-	osd hdmi_osd
+	osd #(.OSD_COLOR(1)) hdmi_osd
 	(
 		.clk_sys(clk_sys),
 
@@ -1667,12 +1684,17 @@ assign HDMI_TX_DE = hdmi_out_de;
 assign HDMI_TX_D  = hdmi_out_d;
 
 // native-rate RTG analog scanout (instantiated at the end of the module), for RTG modes up to 640x480
+`ifdef BIGMIG_NO_RTG_ANALOG
+// no analog output on this board: RTG is shown through the scaler (HDMI) only
+wire        rtg_scanout_active = 1'b0;
+`else
 wire        rtg_native_en = 1'b1;
 
 wire        rtg_scanout_active = RTG_EN & rtg_native_en &
                                  (RTG_HEIGHT != 12'd0) & (RTG_HEIGHT <= 12'd480) &
                                  (RTG_WIDTH  != 12'd0) & (RTG_WIDTH  <= 12'd640) &
                                  rtg_fmt_ok;
+`endif
 wire [23:0] rtgs_o;
 wire        rtgs_hs, rtgs_vs, rtgs_cs, rtgs_de;
 
@@ -2127,6 +2149,7 @@ wire [13:0] fb_stride;
 emu emu
 (
 	.CLK_50M(FPGA_CLK2_50),
+	.CLK_100M(clk_100m),
 	.RESET(reset),
 	.HPS_BUS({f1, HDMI_TX_VS, 
 				 clk_100m, clk_ihdmi,
@@ -2218,6 +2241,18 @@ emu emu
 	.SDRAM_CLK(SDRAM_CLK),
 	.SDRAM_CKE(SDRAM_CKE),
 
+	.PSRAM_SCLK(PSRAM_SCLK),
+	.PSRAM_CE_N(PSRAM_CE_N),
+	.PSRAM_SIO_OUT(PSRAM_SIO_OUT),
+	.PSRAM_SIO_OE(PSRAM_SIO_OE),
+	.PSRAM_SIO_IN(PSRAM_SIO_IN),
+
+	.PSRAM2_SCLK(PSRAM2_SCLK),
+	.PSRAM2_CE_N(PSRAM2_CE_N),
+	.PSRAM2_SIO_OUT(PSRAM2_SIO_OUT),
+	.PSRAM2_SIO_OE(PSRAM2_SIO_OE),
+	.PSRAM2_SIO_IN(PSRAM2_SIO_IN),
+    
 `ifdef MISTER_DUAL_SDRAM
 	.SDRAM2_DQ(SDRAM2_DQ),
 	.SDRAM2_A(SDRAM2_A),
@@ -2357,6 +2392,26 @@ bm_gpu_top #(.N(2), .UC_FILE("rtl/gpu/bigmig/bm_setup_ucode.hex"), .LUT_FILE("rt
 assign ram_clk = clk_100m;
 `endif
 
+`ifdef BIGMIG_NO_RTG_ANALOG
+// RTG analog scanout left out: park its DDR read port and the analog mux inputs
+`ifdef BIGMIG_GPU
+assign rtgr_address    = 29'd0;
+assign rtgr_burstcount = 8'd0;
+assign rtgr_read       = 1'b0;
+`else
+assign ram_address     = 29'd0;
+assign ram_burstcount  = 8'd0;
+assign ram_read        = 1'b0;
+assign ram_writedata   = 64'd0;
+assign ram_byteenable  = 8'd0;
+assign ram_write       = 1'b0;
+`endif
+assign rtgs_o  = 24'd0;
+assign rtgs_hs = 1'b0;
+assign rtgs_vs = 1'b0;
+assign rtgs_cs = 1'b0;
+assign rtgs_de = 1'b0;
+`else
 wire [1:0] rtg_cmode  = (RTG_FMT[2:0]==3'b011) ? 2'd0 :   // 8bpp CLUT
                         (RTG_FMT[2:0]==3'b100) ? 2'd1 :   // 16bpp
                         2'd2;                             // 24/32bpp
@@ -2576,6 +2631,7 @@ vga_out u_rtgs_vgaout
 	.csync_o  (rtgs_cs),
 	.de_o     (rtgs_de)
 );
+`endif // BIGMIG_NO_RTG_ANALOG
 
 
 endmodule
