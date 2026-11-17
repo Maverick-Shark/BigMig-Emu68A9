@@ -15,6 +15,10 @@
 //      PSRAM2 (chip B, low byte lane) : SIO0..3 = 29/27/53/30, SCLK 28, CE# 23
 //  - User LEDs D5..D8 are HPS GPIO14/22/25/32, muxed to loan I/O by the
 //    hps-ch96 preloader handoff; the RF LEDs are FPGA pins Y19/Y20.
+//  - Fan: PWM on HPS TRACE_D0, lent to the FPGA as loan I/O 49 by the
+//    hps-ch96 preloader from 97e5fe4 (2026-11-11) on, as in teiram's
+//    Template_MiSTer_ch96. With an older preloader the pin stays an HPS
+//    pin and this output has no effect.
 //  - No VGA, SDIO, analog audio, MCP23009, ADC or USER_IO: tied off.
 //
 //  LED map (sys_top LED vector, active high):
@@ -72,6 +76,8 @@ module ch96_top
 	// belongs to the HPS SDMMC.
 	wire        sdcd_spdif = 1'b1;
 
+	wire        FAN_PWM;
+
 	sys_top sys_top
 	(
 		/////////// CLOCK //////////
@@ -92,6 +98,9 @@ module ch96_top
 		.PSRAM2_SIO_OUT(PSRAM2_SIO_OUT),
 		.PSRAM2_SIO_OE(PSRAM2_SIO_OE),
 		.PSRAM2_SIO_IN(PSRAM2_SIO_IN),
+
+		//////////// Fan (loan I/O 49) //////////
+		.FAN_PWM(FAN_PWM),
 
 		//////////// SDRAM - not present //////////
 		.SDRAM_A(),
@@ -237,6 +246,10 @@ module ch96_top
 	assign loan_io_oe[28]  = 1'b1;
 	assign loan_io_out[23] = PSRAM2_CE_N;
 	assign loan_io_oe[23]  = 1'b1;
+
+	// fan (TRACE_D0)
+	assign loan_io_out[49] = FAN_PWM;
+	assign loan_io_oe[49]  = 1'b1;
 
 	// RF LEDs
 	assign LED_YELLOW = led[1];

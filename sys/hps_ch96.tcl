@@ -5,10 +5,9 @@
 # the uart and i2c peripheral interfaces where the Chameleon96 preloader
 # handoff has them (teiram, hps-ch96/hps.sopcinfo).
 #
-# BigMig keeps the MiSTer ALSA path (HPS SPI master atom), which the Amstrad
-# ch96 port leaves out. The location below is the standard MiSTer one; if the
-# board's preloader does not route SPIM to the FPGA the atom is simply idle
-# (no ALSA audio). Define MISTER_DISABLE_ALSA to leave it out entirely.
+# The SPI master location is only used without MISTER_DISABLE_ALSA (the
+# BigMig_ch96 default disables ALSA: the hps-ch96 preloader muxes both SPI
+# masters to HPS pins). Quartus ignores it, with a warning, when the atom is absent.
 #============================================================================
 
 set_instance_assignment -name HPS_LOCATION HPSINTERFACEPERIPHERALUART_X52_Y67_N111 -entity sys_top -to uart

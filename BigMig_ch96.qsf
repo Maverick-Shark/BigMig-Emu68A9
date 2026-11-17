@@ -81,8 +81,11 @@ set_global_assignment -name VERILOG_MACRO "MISTER_CHAMELEON96=1"
 #set_global_assignment -name VERILOG_MACRO "PSRAM_SCLK_INV=1"
 # the board has no VGA/analog output: leave out the RTG native-rate analog scanout
 set_global_assignment -name VERILOG_MACRO "BIGMIG_NO_RTG_ANALOG=1"
-# uncomment if the preloader does not route the HPS SPI master to the FPGA
-#set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
+# No ALSA on this board: the hps-ch96 preloader muxes SPIM0 and SPIM1 to HPS pins
+# ("HPS I/O Set 0"), so the FPGA's SPI atom never hears from Linux. Same default
+# as teiram's Template_MiSTer_ch96. Remove only with a preloader that routes an
+# SPI master to the FPGA. Note: BigMig's AHI and MHI audio reach HDMI through ALSA.
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ALSA=1"
 
 source sys/pins_ch96.tcl
 source sys/hps_ch96.tcl

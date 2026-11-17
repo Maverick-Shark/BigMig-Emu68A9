@@ -203,6 +203,10 @@ cmd = ['verilator', '--lint-only', '--no-timing', '-Wno-fatal', '-Wno-WIDTH', '-
        '-Wno-VARHIDDEN', '-Wno-MULTITOP', '-Wno-ENUMVALUE', '-Wno-REDEFMACRO', '-Wno-ALWCOMBORDER',
        '-Wno-UNPACKED', '-Wno-INCABSPATH', '-Wno-SIDEEFFECT', '-Wno-PROCASSWIRE',
        '-Wno-ASSIGNIN',   # stock sys_top: an input pin inside the emu ADC_BUS inout concatenation
+       # Verilator 5.020 aborts in its gate optimiser ("V3Gate.cpp:1043: Consumer doesn't
+       # match lhs of assign") on upstream rtl/rtg_hdmi_osd_sprite.v (col5). That pass only
+       # optimises; with it off the lint checks are the same.
+       '-fno-gate',
        '--top-module', 'ch96_top', f'-I{work}', f'-I{tree}', f'-I{tree}/rtl', f'-I{tree}/sys']
 cmd += [f'-I{d}' for d in incdirs]
 cmd += [f'+define+{m}' for m in macros]

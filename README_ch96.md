@@ -8,7 +8,10 @@ Este árbol es BigMig-Emu68A9 tal como está en
 `3d5d4d19169fa88673bdd926d8d1fced5c9a2cd9` (release 20261019) más los cambios
 de este port. Las piezas de la Chameleon96 (marco `sys/` de la placa, top
 level, pines, PLL de la PSRAM, controlador QPI y calibración) vienen del port
-del Amstrad de teiram, `Amstrad_MiSTer_ch96`, commit `6ca26b71b4a2`.
+del Amstrad de teiram, `Amstrad_MiSTer_ch96`, commit `6ca26b71b4a2`. Después
+se han contrastado con su plantilla de núcleos, `Template_MiSTer_ch96` (commit
+`023c7cb`), y con el mapa de la DDR3 de la placa (ver
+[Memoria DDR3](#memoria-ddr3-de-la-chameleon96)).
 
 ## Qué funciona y qué no, en esta fase
 
@@ -24,11 +27,20 @@ puntos siguientes del plan:
 | punto | qué | por qué hace falta |
 |---|---|---|
 | 4 | adelanto de la DMA de Agnus (y de las lecturas de la CPU por el bus de chip) | una lectura de PSRAM no cabe en el slot de 140 ns en que el chipset espera el dato (ver más abajo) |
-| 5 | mapa de DDR del firmware Emu68-A964 para 512 MB | la Chameleon96 tiene 512 MB de DDR3 y BigMig está hecho para 1 GB |
-| 6 | Main_MiSTer / Linux de la Chameleon96 con soporte BigMig | sin él no se carga Emu68 en el núcleo ARM, y en el modo HYBRID_EMU no hay otra CPU |
+| 5 | llevar a `0x10000000–0x1C000000` todo lo que el firmware Emu68-A964 y el Main de BigMig ponen en la DDR | en la DE10-Nano ocupa `0x23800000–0x40000000`, que en la Chameleon96 no existe: el controlador de 512 MB pliega esas direcciones sobre la memoria de Linux (ver [Memoria DDR3](#memoria-ddr3-de-la-chameleon96)) |
+| 6 | Main de BigMig (`MiSTer_BigMig`) para la Chameleon96, y comprobar su U-Boot y su Linux | sin él no se carga Emu68 en el núcleo ARM 1, y en el modo HYBRID_EMU no hay otra CPU (ver [Punto 6](#punto-6-main-u-boot-y-linux)) |
 
 Con el Main de teiram, el núcleo se carga como un núcleo genérico: verás el
 menú del CONF_STR de BigMig, no el menú de Minimig.
+
+Orden para seguir:
+
+1. Compila y prueba en la placa (las dos secciones siguientes). Con el informe
+   de PLL, el estado de D5 y lo que marcan D7 y D6 se hace el punto 4.
+2. Mientras tanto, la prueba del `.txt` del [punto 6](#punto-6-main-u-boot-y-linux),
+   que no necesita BigMig.
+3. El punto 5 se puede preparar ya sobre el código de Emu68-A964, que es
+   público. El lado del Main necesita el código de `MiSTer_BigMig`.
 
 ## Compilar
 
@@ -93,18 +105,25 @@ Si tienes SignalTap, el estado completo de la calibración está en
 
 Es el mismo formato que el `psram.stp` del Amstrad.
 
+**Ventilador.** El núcleo saca por el pin del ventilador el mismo PWM que la
+plantilla de teiram: 50 % a unos 48 Hz. Solo llega al ventilador con el
+preloader de `hps-ch96` desde el commit `97e5fe4` (11-11-2026), que presta ese
+pin (TRACE_D0, loan I/O 49) a la FPGA. Con un preloader anterior el pin sigue
+siendo del HPS y no pasa nada más.
+
 ## Qué cambia respecto a BigMig (DE10-Nano)
 
 | fichero | cambio |
 |---|---|
-| `BigMig_ch96.qpf/.qsf/.sdc` | proyecto nuevo. Mismas opciones y macros que `BigMig.qsf`, más `MISTER_CHAMELEON96` y `BIGMIG_NO_RTG_ANALOG`. Un solo SDC que sustituye a `sys_top.sdc`, `BigMig.sdc`, `f0e_*.sdc`, `f1_gpu.sdc`, `seam.sdc` y `rtg_scanout.sdc`, con las rutas bajo `sys_top\|` |
-| `ch96_top.sv` | top level de la placa (el de teiram), con la PSRAM y los LEDs en el bus loan I/O del HPS |
-| `sys/sys_top.v`, `sys/sysmem.sv`, `sys/emu_ports.vh` | fusión a tres bandas sobre la base común de ambos forks (Template_MiSTer `f35083f3b4`), sin conflictos: lo de BigMig (seam AXI, GPU, RTG, ALSA en ddr_svc) más lo de la Chameleon96 (`clk_50m` desde `h2f_user1_clk`, puertos PSRAM, LEDs, scaler en `0x1E800000`). Además, la macro `BIGMIG_NO_RTG_ANALOG` deja fuera la salida RTG analógica nativa |
-| `sys/sys.qip`, `sys/arcade_video.v`, `sys/pll_hdmi/pll_hdmi_0002.v`, `sys/pll_q22.qip`, `sys/pins_ch96.tcl` | los de la Chameleon96 de teiram, sin cambios |
-| `sys/hps_ch96.tcl` | el de teiram más la ubicación del SPI del HPS (ALSA de BigMig) |
+| `BigMig_ch96.qpf/.qsf/.sdc` | proyecto nuevo. Mismas opciones y macros que `BigMig.qsf`, más `MISTER_CHAMELEON96`, `BIGMIG_NO_RTG_ANALOG` y `MISTER_DISABLE_ALSA` (ver [Opciones](#opciones)). Un solo SDC que sustituye a `sys_top.sdc`, `BigMig.sdc`, `f0e_*.sdc`, `f1_gpu.sdc`, `seam.sdc` y `rtg_scanout.sdc`, con las rutas bajo `sys_top\|` |
+| `ch96_top.sv` | top level de la placa (el de teiram), con la PSRAM, los LEDs y el ventilador (loan I/O 49, como en `Template_MiSTer_ch96`) en el bus loan I/O del HPS |
+| `sys/sys_top.v`, `sys/sysmem.sv`, `sys/emu_ports.vh` | fusión a tres bandas sobre la base común de ambos forks (Template_MiSTer `f35083f3b4`), sin conflictos: lo de BigMig (seam AXI, GPU, RTG, ALSA en ddr_svc) más lo de la Chameleon96 (`clk_50m` desde `h2f_user1_clk`, puertos PSRAM, LEDs, scaler en `0x1E800000`). Encima, tres cambios: `BIGMIG_NO_RTG_ANALOG` deja fuera la salida RTG analógica nativa; la salida `FAN_PWM` del ventilador; y con `MISTER_CHAMELEON96` las direcciones de la GPU en la DDR quedan fijadas dentro de `0x10000000–0x1FFFFFFF` |
+| `sys/sys.qip`, `sys/arcade_video.v`, `sys/pll_hdmi/pll_hdmi_0002.v`, `sys/pll_q22.qip`, `sys/pins_ch96.tcl` | los de la Chameleon96 de teiram, sin cambios (iguales en el Amstrad y en la plantilla) |
+| `sys/hps_ch96.tcl` | el de teiram más la ubicación del SPI del HPS, que solo se usa si se quita `MISTER_DISABLE_ALSA` |
 | `BigMig.sv` | todo bajo `ifdef MISTER_CHAMELEON96`: PLL de la PSRAM, `psram_chip_ctrl` como `ram1`, SDRAM aparcada, reset retenido hasta que la PSRAM está calibrada, y estado de la calibración en los LEDs |
 | `rtl/pll_psram*` | la PLL de la PSRAM del Amstrad (VCO 640 MHz, 128 MHz más captura con desplazamiento de fase dinámico en C2), renombrada y sin metadatos de IP, para que la acepte Quartus 17 |
 | `rtl/psram/` | el controlador de chip RAM (ver abajo) |
+| `tools_ch96/`, `sim_ch96/` | los scripts que generan este árbol desde BigMig y el Amstrad, el lint y el banco de pruebas del controlador |
 
 `BigMig.qpf/.qsf` y `jtag.cdf` de la DE10-Nano no están en este árbol, porque
 su `sys/` ya es el de la Chameleon96. Para la DE10-Nano usa el repositorio
@@ -222,6 +241,151 @@ También se corrigió el modelo: mantenía el nivel de reposo en el bus durante
 tACLK tras bajar CE#, lo que producía los avisos "tSP violation" de antes y
 hacía fallar en falso el modo invertido.
 
+## Memoria DDR3 de la Chameleon96
+
+### La placa
+
+* 512 MB de DDR3 de **16 bits** a 400 MHz: 1,6 GB/s de pico, la mitad que la
+  DE10-Nano (1 GB, 32 bits). La comparten los dos núcleos ARM y la FPGA.
+* Linux usa `0x00000000–0x0FFFFFFF`. `0x10000000–0x1FFFFFFF` está reservado
+  en el device tree (`no-map`): Linux no lo toca, y es lo único que pueden
+  usar la FPGA, el Main y Emu68.
+* El controlador solo decodifica los bits de 512 MB. Una dirección más alta
+  no da error: se repite sobre la memoria de Linux. Así corrompía Linux el
+  ao486 original.
+
+Qué hay en la zona reservada y qué queda para BigMig. Solo se carga un `.rbf`
+a la vez, así que lo que usan otros núcleos no cuenta:
+
+| zona | tamaño | qué es | con BigMig |
+|---|---|---|---|
+| `0x10000000–0x1C000000` | 192 MB | ventana del ao486 y sombra GCR del C64 (`0x1B800000`), de otros núcleos | **libre** |
+| `0x1C000000–0x1CFFF000` | 16 MB | framebuffer de los arcade y base de `sdram_on_ddr`, de otros núcleos | libre: BigMig no usa ninguno de los dos |
+| `0x1CFFF000–0x1D000000` | 4 KB | paleta del LFB del Main | ocupada |
+| `0x1D000000–0x1E7B8000` | 23,7 MB | LFB del Main (menú, terminal de Linux) | ocupado |
+| `0x1E800000–0x20000000` | 24 MB | buffers del scaler (`ascal`) | ocupado siempre |
+
+### Lado FPGA: correcto
+
+En la FPGA no queda ninguna dirección de la DE10-Nano. Quién toca la DDR:
+
+| quién | puerto | dirección | estado |
+|---|---|---|---|
+| scaler (`ascal`): sus buffers | vbuf (128 bits) | `0x1E800000`, fija en `sys_top` | correcta: es la de la plantilla de la Chameleon96 |
+| scaler: framebuffer RTG (`MISTER_FB`) | vbuf | `FB_BASE`, la escribe el driver RTG del Amiga en `rtg.v` | solo lee. Con el punto 5 apuntará a la VRAM RTG nueva |
+| scaler: LFB del Main | vbuf | la que fija el Main (`0x1D000000` en el de teiram) | solo lee |
+| `ddr_svc`: paleta del LFB y ALSA | ram2 | 4 KB por debajo del LFB; ALSA, el búfer de Linux | solo lee; ALSA fuera (`MISTER_DISABLE_ALSA`) |
+| GPU de BigMig | ram1 (64 bits) | la que le da el firmware | **escribe**. Con `MISTER_CHAMELEON96` queda fijada dentro de `0x10000000–0x1FFFFFFF` |
+| RTG analógico (`rtg_ddr_reader`) | ram2 | `FB_BASE` | fuera (`BIGMIG_NO_RTG_ANALOG`) |
+
+La guarda de la GPU fuerza a `0001` los cuatro bits altos de la dirección de
+byte. Con una dirección equivocada (por ejemplo, la de la DE10-Nano) la GPU
+puede estropear la imagen, pero no la memoria de Linux. Con el firmware del
+punto 5 no cambia nada.
+
+### Lado Emu68 y Main: hay que moverlo (punto 5)
+
+En la DE10-Nano todo esto está en `0x23800000–0x40000000` (456 MB). La
+propuesta lo lleva a `0x10000000–0x1C000000` (192 MB) con el mismo orden y las
+mismas distancias internas, para que el cambio sea solo de constantes. Cumple
+las comprobaciones `#if … #error` de `amiga_memmap.h`.
+
+| qué | constantes | DE10-Nano | tamaño | Chameleon96 | tamaño |
+|---|---|---|---|---|---|
+| VRAM de la ZZ9000 | `ZZ9000_VRAM_PHYS`, `ZZ9000_BACKING_BYTES` | `0x23800000` | 64 MB | `0x10000000` | 32 MB |
+| VRAM RTG de MiSTer (los 8 MB de arriba de la anterior) | `RTGVRAM_DDR_BASE`, `FB_BASE` del driver | `0x27000000` | 8 MB | `0x11800000` | 8 MB |
+| HDFBOX, buzón y SHARE | `HDFBOX_DDR_BASE`, `SHARE_MBOX_DDR`, `SHARE_DDR_BASE` (= `SHMEM_ADDR` del Main) | `0x27FF2000`, `0x27FF3000`, `0x27FF4000` | 16 KB | `0x127F2000`, `0x127F3000`, `0x127F4000` | 16 KB |
+| `Emu68.img` (carga y entrada del núcleo 1) | `EMU68_IMG_LOAD`, `CPU_RAM_BASE` | `0x28000000` | 8 MB | `0x12800000` | 8 MB |
+| anillos de red, AHI y MHI (dentro de la anterior) | `ZZNET_*`, `UAESND_*`, `MHI_*` | `0x28610000–0x28670000` | | `0x12E10000–0x12E70000` | |
+| Fast RAM Zorro II | `FASTRAM_DDR_BASE` | `0x28800000` | 8 MB | `0x13000000` | 8 MB |
+| heap 2 de A3D y arena de MiniGL | `A3D_HEAP2_DDR_BASE`, `A3D_MGLC_ARENA_DDR_BASE` | `0x29200000`, `0x29E00000` | 14 MB | `0x13A00000`, `0x14600000` | 14 MB |
+| Fast RAM Zorro III | `Z3FAST_DDR_BASE`, `Z3FAST_SIZE_MB` | `0x2A000000` | 256 MB | `0x14800000` | **64 MB** |
+| pool del JIT | `JITPOOL_DDR_BASE`, `JITPOOL_SIZE_MB` | `0x3A000000` | 64 MB | `0x18800000` | **24 MB** |
+| ROM de BigMigHD, DTREE y FPresident | `BIGMIGHD_ROM_DDR_BASE`, `DTREE_ROM_DDR_BASE`, `FPRESIDENT_ROM_DDR_BASE` | `0x3E100000` | 4 MB | `0x1A100000` | 4 MB |
+| heap de A3D | `A3D_HEAP_DDR_BASE` | `0x3E500000` | 16 MB | `0x1A500000` | 16 MB |
+| ROM extendida | `EXTROM_DDR_BASE` | `0x3F600000` | 512 KB | `0x1B600000` | 512 KB |
+| Kickstart | `ROM_DDR_BASE`, `KICKSTART_DDR` | `0x3F700000`, `0x3F780000` | 1 MB | `0x1B700000`, `0x1B780000` | 1 MB |
+| núcleo de Emu68 y tlsf | `EMU68_KERNEL_DDR`, `CPU_RAM_TOP` | `0x3F800000`, tope `0x40000000` | 8 MB | `0x1B800000`, tope `0x1C000000` | 8 MB |
+
+Notas:
+
+* Las tres páginas compartidas siguen en el mismo mega (`0x127xxxxx`), porque
+  el firmware las mapea con una sola sección de 1 MB.
+* Los anillos siguen en `Emu68.img + 0x610000`; su sección pasa de
+  `mmu_table[0x286]` a `mmu_table[0x12E]`.
+* El firmware mapea `CPU_RAM_BASE…CPU_RAM_TOP` con VA = PA, así que el 68k verá
+  esa zona en `0x12800000–0x1BFFFFFF`. Hay que comprobar que no choca con nada
+  del espacio Amiga (Fast Z3 en `0x40000000`, VRAM RTG del 68k en
+  `0x02000000`).
+
+Variantes:
+
+* **A**: VRAM de la ZZ9000 de 64 MB, como ahora. Quedan 32 MB de Fast Z3 y
+  24 MB de JIT.
+* **B** (la de la tabla): VRAM de 32 MB (24 MB para la ZZ9000 y 8 MB para el
+  RTG de MiSTer), 64 MB de Fast Z3 y 24 MB de JIT.
+* **C**: A o B, subiendo el tope a `0x1CF00000` (15 MB más), por ejemplo para
+  el JIT. No se puede pasar de ahí: en `0x1CFFF000` está la paleta del LFB. Si
+  la Fast Z3 se anuncia por autoconfig, su tamaño tiene que ser potencia de 2.
+
+Ficheros que hay que cambiar:
+
+* **Emu68-A964** (código público):
+  * `src/pistorm/amiga_memmap.h`: todas las direcciones de la tabla,
+    `Z3FAST_SIZE_MB` y `JITPOOL_SIZE_MB`, y las comprobaciones de DTREE y
+    FPresident, que llevan `0x3F600000u` escrito a mano en vez de
+    `EXTROM_DDR_BASE`;
+  * `src/de10nano/start_de10nano.c`: `CPU_RAM_BASE`, `CPU_RAM_TOP` y la sección
+    `0x286` de los anillos;
+  * `src/de10nano/zz9000_board.c`: `ZZ9000_VRAM_PHYS` y, con la variante B,
+    `ZZ9000_BACKING_BYTES`.
+
+  Mejor con una macro de placa (p. ej. `CHAMELEON96`) que cambiando los números
+  de la DE10-Nano. Ojo: los `0x3F800000` de `agent3d/a3d_draw.c` son el 1,0 en
+  coma flotante, no direcciones.
+* **Main de BigMig**: `SHMEM_ADDR` y las otras dos páginas compartidas, la carga
+  de `Emu68.img`, de la Kickstart, de la ROM extendida y de las ROM de
+  BigMigHD, DTREE y FPresident, y los anillos de red, AHI y MHI.
+* **Driver RTG del Amiga**: su `FB_BASE` (= `RTGVRAM_DDR_BASE`).
+
+## Punto 6: Main, U-Boot y Linux
+
+Lo que hay que resolver o comprobar para que el Main de BigMig funcione en la
+Chameleon96:
+
+1. **El código del Main de BigMig.** `MiSTer_BigMig` se publica compilado, y
+   el fork `Main_MiSTer` de raparici solo tiene el upstream. Para la
+   Chameleon96 hay que juntar sus cambios con los del Main de teiram
+   (`Main_MiSTer_ch96`, macro `CHAMELEON96`: `FB_ADDR 0x1D000000`, scaler en
+   `0x1E800000`) y con el punto 5. Hay que pedírselo a raparici.
+2. **El `.txt` de BigMig (`maxcpus=1`).** Al cargar BigMig, el Main escribe el
+   entorno de U-Boot en `0x1FFFF000` con el `.txt` y reinicia; U-Boot vuelve a
+   cargar el `.rbf` y arranca Linux con esos argumentos. El Main de teiram
+   tiene ese código (`make_env`), pero hay que probar que el U-Boot de la
+   Chameleon96 lo usa, incluida la segunda línea del `.txt` (`scrtest`,
+   `$mmc_boot`, `$loadaddr`). Se puede probar sin BigMig: copia un núcleo
+   cualquiera de la Chameleon96 como `Prueba.rbf` y, a su lado, el `.txt` de
+   BigMig como `Prueba.txt`. Al cargarlo, la placa tiene que reiniciar y
+   volver con ese núcleo, y en Linux `cat /proc/cmdline` tiene que mostrar
+   `maxcpus=1 sidecar=1` y `nproc` tiene que dar 1.
+3. **El puente HPS→FPGA.** La costura de BigMig está en `0xC0000000`, en el
+   puente h2f. En la DE10-Nano el Main lo abre (`do_bridge`: registro `remap`
+   del NIC-301 a `0x19`); el Main de teiram se salta esa escritura con
+   `CHAMELEON96`. Sin ella Emu68 no ve el bus del Amiga. Hay que saber por qué
+   la quitó teiram y, si U-Boot no deja el puente abierto, hacerla en el Main
+   de BigMig.
+4. **Audio de AHI y MHI.** Va del Main a ALSA y de ahí a la FPGA. En la
+   Chameleon96 no hay ALSA (ver [Opciones](#opciones)). Hace falta otro
+   camino: por ejemplo, que el Main deje las muestras en un anillo de la zona
+   reservada y la FPGA las lea por ram2, con la dirección y los punteros por
+   `hps_io` en vez de por SPI. Paula y el audio de CD no dependen de esto.
+5. **Linux.** BigMig está validado con Linux 5.15.1-MiSTer y aún no con 6.x.
+   Mira con `uname -r` qué kernel lleva la Chameleon96.
+6. **Ancho de banda.** El JIT, la Fast RAM y las texturas de Emu68 están en la
+   DDR, que aquí rinde la mitad. Habrá que medirlo. Si el vídeo o Emu68 se
+   resienten, el controlador tiene prioridades por puerto (`MPPRIORITY`,
+   `MPWEIGHT`).
+
 ## Comprobación sin Quartus
 
 Este árbol se ha comprobado sin Quartus, así:
@@ -231,10 +395,16 @@ Este árbol se ha comprobado sin Quartus, así:
   entidades VHDL, y elabora el diseño entero desde `ch96_top` con Verilator.
 * Sale **sin errores** con:
   * la configuración del `.qsf`;
-  * sin `BIGMIG_NO_RTG_ANALOG`;
+  * con ALSA (sin `MISTER_DISABLE_ALSA`);
   * sin GPU;
-  * sin GPU y con la salida RTG analógica;
-  * con `MISTER_DISABLE_ALSA`.
+  * con la salida RTG analógica (sin `BIGMIG_NO_RTG_ANALOG`);
+  * con `PSRAM_SCLK_INV`.
+* Los únicos avisos son los 11 que ya tiene BigMig (5 sin GPU); ninguno en el
+  código nuevo.
+* El script pasa `-fno-gate` a Verilator. La versión 5.020 aborta en esa
+  optimización con `rtl/rtg_hdmi_osd_sprite.v`, que es de BigMig y no cambia
+  en este port. Es una pasada de optimización: las comprobaciones son las
+  mismas.
 
 Esto no sustituye a Quartus: no cubre el VHDL, ni el ajuste, ni los tiempos, ni
 lo que Quartus 17 pueda aceptar de forma distinta. Si Quartus da un error,
@@ -244,10 +414,14 @@ pásamelo tal cual.
 
 * `BIGMIG_NO_RTG_ANALOG`: activada. Esta placa no tiene salida analógica; el
   RTG se ve por HDMI, a través del scaler.
-* `MISTER_DISABLE_ALSA`: desactivada. BigMig usa ALSA. Si el preloader de la
-  Chameleon96 no lleva el SPI del HPS a la FPGA, el átomo se queda quieto y no
-  hay audio ALSA. Si diera problemas al compilar, descomenta la línea en el
-  `.qsf`.
+* `MISTER_DISABLE_ALSA`: **activada**, como en `Template_MiSTer_ch96`. El
+  preloader de la Chameleon96 (`hps-ch96`) lleva SPIM0 y SPIM1 a pines del HPS,
+  así que el SPI de Linux no llega a la FPGA y ALSA no puede funcionar. El
+  precio: el audio de AHI y MHI de BigMig, que sale por ALSA, no suena (ver
+  [punto 6](#punto-6-main-u-boot-y-linux)). Quítala solo con un preloader que
+  lleve un SPI a la FPGA.
+* `PSRAM_SCLK_INV`: desactivada (ver
+  [la revisión del módulo](#revisión-del-módulo-aps6404l-sqn-y-polaridad-de-sclk)).
 * `BIGMIG_NO_CHIP_WRITE_RETRY`: activada, igual que en la DE10-Nano.
 
 ## Créditos y licencias
@@ -255,6 +429,7 @@ pásamelo tal cual.
 * BigMig-Emu68A9 (Ruben Aparicio), Minimig-AGA para MiSTer (Alexey Melnikov y
   sus autores), Template_MiSTer: GPL, según cada fichero.
 * Port a la Chameleon96: `ch96_top`, marco `sys/`, PLL y controlador PSRAM v3
-  (`psram.sv`, `psram_cal3.sv`, `psram_dps.sv`), de teiram (Amstrad_MiSTer_ch96).
+  (`psram.sv`, `psram_cal3.sv`, `psram_dps.sv`), de teiram (Amstrad_MiSTer_ch96);
+  el ventilador y las opciones por defecto, de su `Template_MiSTer_ch96`.
 * `psram_chip_ctrl`, `psram_dual`, `psram_afifo`, los scripts y el banco de
   pruebas de este port: GPL-3.0 o posterior, como BigMig.

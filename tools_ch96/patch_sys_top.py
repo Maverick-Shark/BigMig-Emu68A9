@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""BIGMIG_NO_RTG_ANALOG for sys/sys_top.v (Chameleon96: no VGA / analog output).
+"""Chameleon96 additions to the merged sys/sys_top.v.
 
-With the macro defined, the RTG native-rate analog scanout (rtg_ddr_reader,
-rtg_scanout, its OSD, csync and vga_out) is left out, its DDR read port on the
-ram2 arbiter (or ram1 without the GPU) is parked and the analog mux inputs are
-tied to zero. The HDMI mouse pointer (rtg_hdmi_osd_sprite) stays.
-Without the macro the file is the merged BigMig + Chameleon96 framework.
+* BIGMIG_NO_RTG_ANALOG (no VGA / analog output on the board): the RTG
+  native-rate analog scanout (rtg_ddr_reader, rtg_scanout, its OSD, csync and
+  vga_out) is left out, its DDR read port on the ram2 arbiter (or ram1 without
+  the GPU) is parked and the analog mux inputs are tied to zero. The HDMI mouse
+  pointer (rtg_hdmi_osd_sprite) stays.
+* FAN_PWM output, as in teiram's Template_MiSTer_ch96 (loan I/O 49).
+* MISTER_CHAMELEON96: the GPU's DDR accesses are pinned into
+  0x10000000-0x1FFFFFFF, the half of the 512 MB that Linux does not own.
 
 Every replacement must match exactly once.
 Usage: patch_sys_top.py <in sys_top.v> <out sys_top.v>"""
@@ -90,6 +93,51 @@ endmodule
 
 endmodule
 """)
+
+# ---- fan PWM, as teiram's Template_MiSTer_ch96 (ae1702f): HPS TRACE_D0 lent to the
+#      FPGA as loan I/O 49 by the hps-ch96 handoff from 97e5fe4 (2026-11-11) on
+rep("""	input   [3:0] PSRAM2_SIO_IN,
+
+`ifdef MISTER_DUAL_SDRAM""", """	input   [3:0] PSRAM2_SIO_IN,
+
+	//////////// FAN (loan I/O 49) ///////////
+	output        FAN_PWM,
+
+`ifdef MISTER_DUAL_SDRAM""")
+
+rep("""assign LED = (led_overtake & led_state) | (~led_overtake & {1'b0, led_locked, 1'b0, ~led_p, 1'b1, ~led_d, HDMI_TX_DE, ~led_u});
+""", """assign LED = (led_overtake & led_state) | (~led_overtake & {1'b0, led_locked, 1'b0, ~led_p, 1'b1, ~led_d, HDMI_TX_DE, ~led_u});
+
+///////////////////////////  FAN PWM  ///////////////////////////////////
+// Same as teiram's Template_MiSTer_ch96: ~50 % duty at 50 MHz / 2^20 (~48 Hz).
+// It reaches the fan only with an hps-ch96 preloader that lends TRACE_D0 (loan I/O 49).
+reg [19:0] fan_cnt = 20'd0;
+reg        fan_pwm = 1'b0;
+localparam [19:0] FAN_DUTY = 20'd524288;
+always @(posedge FPGA_CLK2_50) begin
+	fan_cnt <= fan_cnt + 1'b1;
+	fan_pwm <= (fan_cnt > FAN_DUTY);
+end
+assign FAN_PWM = fan_pwm;
+""")
+
+# ---- GPU DDR window: on the Chameleon96 Linux owns 0x00000000-0x0FFFFFFF and the
+#      512 MB controller drops the upper address bits, so a stray GPU address
+#      (a DE10 firmware base such as 0x27000000) would write Linux memory.
+rep("""	.avl_address(ram_address), .avl_burstcount(ram_burstcount), .avl_waitrequest(ram_waitrequest),""",
+    """	.avl_address(gpu_avl_address), .avl_burstcount(ram_burstcount), .avl_waitrequest(ram_waitrequest),""")
+rep("""bm_gpu_top #(.N(2), .UC_FILE("rtl/gpu/bigmig/bm_setup_ucode.hex"), .LUT_FILE("rtl/gpu/bigmig/bm_setup_lut.hex"),""",
+    """wire [28:0] gpu_avl_address;
+`ifdef MISTER_CHAMELEON96
+// Chameleon96: pin every GPU access into the half Linux does not use,
+// 0x10000000-0x1FFFFFFF (ram1 is 64-bit, word address bits [28:25] = 4'b0001).
+// The 512 MB controller would otherwise fold 0x2xxxxxxx/0x3xxxxxxx onto Linux memory.
+assign ram_address = {4'b0001, gpu_avl_address[24:0]};
+`else
+assign ram_address = gpu_avl_address;
+`endif
+
+bm_gpu_top #(.N(2), .UC_FILE("rtl/gpu/bigmig/bm_setup_ucode.hex"), .LUT_FILE("rtl/gpu/bigmig/bm_setup_lut.hex"),""")
 
 open(dst, 'w', newline='').write(s)
 print("patch_sys_top: ok ->", dst)
